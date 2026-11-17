@@ -1,28 +1,111 @@
 import "./style.css";
+import { HandLandmarker } from "@mediapipe/tasks-vision";
+import {
+  assignHands,
+  countFingers,
+  createHandTracker,
+  FingerReader,
+  measureFingers,
+  type FingerMetrics,
+  type Fingers,
+  type Landmarks,
+} from "./hands";
 
 const video = document.getElementById("video") as HTMLVideoElement;
+const overlay = document.getElementById("overlay") as HTMLCanvasElement;
 const startButton = document.getElementById("start") as HTMLButtonElement;
 const status = document.getElementById("status") as HTMLParagraphElement;
+const debug = document.getElementById("debug") as HTMLDivElement;
 
-async function startCamera() {
+let tracker: HandLandmarker;
+let lastVideoTime = -1;
+const leftReader = new FingerReader();
+const rightReader = new FingerReader();
+
+async function start() {
   startButton.disabled = true;
-  status.textContent = "opening camera…";
-
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
+    status.textContent = "opening camera…";
+    video.srcObject = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
       audio: false,
     });
-    video.srcObject = stream;
     await video.play();
 
-    console.log(`camera: ${video.videoWidth}x${video.videoHeight}`);
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
+
+    status.textContent = "loading hand model…";
+    tracker = await createHandTracker();
+
     document.getElementById("start-screen")!.remove();
+    requestAnimationFrame(loop);
   } catch (err) {
     console.error(err);
-    status.textContent = `Could not open camera: ${(err as Error).message}`;
+    status.textContent = `Could not start: ${(err as Error).message}`;
     startButton.disabled = false;
   }
 }
 
-startButton.addEventListener("click", startCamera);
+function loop(now: number) {
+  if (video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    const result = tracker.detectForVideo(video, now);
+
+    const aspect = video.videoWidth / video.videoHeight;
+    const { left, right } = assignHands(result.landmarks);
+
+    const leftMetrics = left && measureFingers(left, aspect);
+    const rightMetrics = right && measureFingers(right, aspect);
+
+    // El kaybolursa okuyucuyu sıfırla, geri geldiğinde temiz başlasın
+    const leftFingers = leftMetrics ? leftReader.read(leftMetrics) : (leftReader.reset(), undefined);
+    const rightFingers = rightMetrics ? rightReader.read(rightMetrics) : (rightReader.reset(), undefined);
+
+    debug.textContent =
+      `L ${formatFingers(leftFingers)}  ${formatMetrics(leftMetrics)}\n` +
+      `R ${formatFingers(rightFingers)}  ${formatMetrics(rightMetrics)}`;
+    drawHands(left, right);
+  }
+  requestAnimationFrame(loop);
+}
+
+function formatFingers(f?: Fingers): string {
+  if (!f) return "—";
+  return `${f.map((open) => (open ? "▮" : "▯")).join("")}  ${countFingers(f)}`;
+}
+// Kalibrasyon için: başparmak uzanma / düzlük + parmak oranları
+function formatMetrics(m?: FingerMetrics): string {
+  if (!m) return "";
+  const [thumb, ...rest] = m.values;
+  return `👍 ${thumb.toFixed(2)}/${m.thumbStraight.toFixed(2)}  ${rest.map((v) => v.toFixed(2)).join(" ")}`;
+}
+
+function drawHands(left?: Landmarks, right?: Landmarks) {
+  const ctx = overlay.getContext("2d")!;
+  const { width: w, height: h } = overlay;
+  ctx.clearRect(0, 0, w, h);
+
+  const draw = (hand: Landmarks | undefined, color: string) => {
+    if (!hand) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    for (const { start, end } of HandLandmarker.HAND_CONNECTIONS) {
+      ctx.beginPath();
+      ctx.moveTo(hand[start].x * w, hand[start].y * h);
+      ctx.lineTo(hand[end].x * w, hand[end].y * h);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#fff";
+    for (const p of hand) {
+      ctx.beginPath();
+      ctx.arc(p.x * w, p.y * h, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+
+  draw(left, "rgba(245, 165, 36, 0.7)");
+  draw(right, "rgba(79, 209, 197, 0.7)");
+}
+
+startButton.addEventListener("click", start);

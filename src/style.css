@@ -11,7 +11,7 @@ html, body {
 
 #stage { position: fixed; inset: 0; }
 
-#video {
+#video, #overlay {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -37,4 +37,15 @@ html, body {
   padding: 12px 28px;
   font: 700 15px inherit;
   cursor: pointer;
+}
+
+#debug {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  font-size: 22px;
+  white-space: pre;
 }
