@@ -10,24 +10,33 @@ import {
   type Fingers,
   type Landmarks,
 } from "./hands";
+import { degreeFromLeft, modifierFromRight } from "./gestures";
+import { buildChord, type Key, type Mode } from "./theory";
 
 const video = document.getElementById("video") as HTMLVideoElement;
 const overlay = document.getElementById("overlay") as HTMLCanvasElement;
 const startButton = document.getElementById("start") as HTMLButtonElement;
 const status = document.getElementById("status") as HTMLParagraphElement;
 const debug = document.getElementById("debug") as HTMLDivElement;
+const chordName = document.getElementById("chordName") as HTMLDivElement;
+const chordRoman = document.getElementById("chordRoman") as HTMLDivElement;
 
 let tracker: HandLandmarker;
 let lastVideoTime = -1;
 const leftReader = new FingerReader();
 const rightReader = new FingerReader();
+const settings = { key: "C" as Key, mode: "major" as Mode, octave: 3 };
 
 async function start() {
   startButton.disabled = true;
   try {
     status.textContent = "opening camera…";
     video.srcObject = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        facingMode: "user",
+      },
       audio: false,
     });
     await video.play();
@@ -59,8 +68,28 @@ function loop(now: number) {
     const rightMetrics = right && measureFingers(right, aspect);
 
     // El kaybolursa okuyucuyu sıfırla, geri geldiğinde temiz başlasın
-    const leftFingers = leftMetrics ? leftReader.read(leftMetrics) : (leftReader.reset(), undefined);
-    const rightFingers = rightMetrics ? rightReader.read(rightMetrics) : (rightReader.reset(), undefined);
+    const leftFingers = leftMetrics
+      ? leftReader.read(leftMetrics)
+      : (leftReader.reset(), undefined);
+    const rightFingers = rightMetrics
+      ? rightReader.read(rightMetrics)
+      : (rightReader.reset(), undefined);
+
+    const degree = leftFingers ? degreeFromLeft(leftFingers) : null;
+    if (degree) {
+      const chord = buildChord(
+        settings.key,
+        settings.mode,
+        degree,
+        modifierFromRight(rightFingers),
+        settings.octave,
+      );
+      chordName.textContent = chord.name;
+      chordRoman.textContent = chord.roman;
+      chordName.classList.remove("silent");
+    } else {
+      chordName.classList.add("silent");
+    }
 
     debug.textContent =
       `L ${formatFingers(leftFingers)}  ${formatMetrics(leftMetrics)}\n` +
