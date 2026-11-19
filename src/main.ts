@@ -10,8 +10,10 @@ import {
   type Fingers,
   type Landmarks,
 } from "./hands";
-import { degreeFromLeft, modifierFromRight } from "./gestures";
-import { buildChord, type Key, type Mode } from "./theory";
+import { colourFromRight, letterFromLeft } from "./gestures";
+import { buildChord } from "./theory";
+import { ChordSynth } from "./audio";
+import { Transport } from "./transport";
 
 const video = document.getElementById("video") as HTMLVideoElement;
 const overlay = document.getElementById("overlay") as HTMLCanvasElement;
@@ -19,17 +21,27 @@ const startButton = document.getElementById("start") as HTMLButtonElement;
 const status = document.getElementById("status") as HTMLParagraphElement;
 const debug = document.getElementById("debug") as HTMLDivElement;
 const chordName = document.getElementById("chordName") as HTMLDivElement;
-const chordRoman = document.getElementById("chordRoman") as HTMLDivElement;
+const chordNotes = document.getElementById("chordNotes") as HTMLDivElement;
 
 let tracker: HandLandmarker;
+let synth: ChordSynth;
+let transport: Transport;
+let currentChordId = "off"; // its for which chor is now, if it is same do not play again.
 let lastVideoTime = -1;
 const leftReader = new FingerReader();
 const rightReader = new FingerReader();
-const settings = { key: "C" as Key, mode: "major" as Mode, octave: 3 };
+const settings = { octave: 3 };
 
 async function start() {
   startButton.disabled = true;
   try {
+    synth = new ChordSynth();
+    await synth.ctx.resume();
+    transport = new Transport(synth.ctx);
+    transport.onStep((step, time) => {
+      if (step % 4 === 0) click(time, step === 0);
+    });
+    transport.start();
     status.textContent = "opening camera…";
     video.srcObject = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -75,20 +87,27 @@ function loop(now: number) {
       ? rightReader.read(rightMetrics)
       : (rightReader.reset(), undefined);
 
-    const degree = leftFingers ? degreeFromLeft(leftFingers) : null;
-    if (degree) {
-      const chord = buildChord(
-        settings.key,
-        settings.mode,
-        degree,
-        modifierFromRight(rightFingers),
-        settings.octave,
-      );
-      chordName.textContent = chord.name;
-      chordRoman.textContent = chord.roman;
-      chordName.classList.remove("silent");
-    } else {
-      chordName.classList.add("silent");
+    const letter = leftFingers ? letterFromLeft(leftFingers) : null;
+    const chord = letter
+      ? buildChord(
+          { letter, ...colourFromRight(rightFingers) },
+          settings.octave,
+        )
+      : null;
+    const chordId = chord ? chord.name : "off";
+
+    if (chordId !== currentChordId) {
+      currentChordId = chordId;
+
+      if (chord) {
+        synth.play(chord.midi);
+        chordName.textContent = chord.name;
+        chordNotes.textContent = chord.notes.join(" · ");
+        chordName.classList.remove("silent");
+      } else {
+        synth.releaseAll();
+        chordName.classList.add("silent");
+      }
     }
 
     debug.textContent =
@@ -103,11 +122,21 @@ function formatFingers(f?: Fingers): string {
   if (!f) return "—";
   return `${f.map((open) => (open ? "▮" : "▯")).join("")}  ${countFingers(f)}`;
 }
-// Kalibrasyon için: başparmak uzanma / düzlük + parmak oranları
 function formatMetrics(m?: FingerMetrics): string {
   if (!m) return "";
   const [thumb, ...rest] = m.values;
   return `👍 ${thumb.toFixed(2)}/${m.thumbStraight.toFixed(2)}  ${rest.map((v) => v.toFixed(2)).join(" ")}`;
+}
+function click(time: number, accent: boolean) {
+  const osc = new OscillatorNode(synth.ctx, {
+    frequency: accent ? 1500 : 1000,
+  });
+  const amp = new GainNode(synth.ctx, { gain: 0 });
+  osc.connect(amp).connect(synth.ctx.destination);
+  amp.gain.setValueAtTime(0.3, time);
+  amp.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+  osc.start(time);
+  osc.stop(time + 0.06);
 }
 
 function drawHands(left?: Landmarks, right?: Landmarks) {
